@@ -1,7 +1,7 @@
 <template>
   <div>
     <input type="file" @change="loadImage" />
-    <div v-if="imgUrl" class="image-container" :style="imageStyle">
+    <div v-if="imageUrl" class="image-container" :style="imageStyle">
       <svg width="100%" height="100%">
         <polygon :points="polygonPoints" class="polygon" />
       </svg>
@@ -14,21 +14,29 @@
       ></div>
     </div>
     <button @click="logpoints">Log points</button>
+    <button @click="sendImage">Send image</button>
   </div>
   {{ points }}
+  <table>
+    <tr v-for="imgUrl in images"><img :src="imgUrl" max-height="20px" /></tr>
+  </table>
+  
 </template>
 
 <script>
+import {store} from "./store"
 
 export default {
   data() {
     return {
-      imgUrl: null,
+      store,
+      imageUrl: null,
       imageHeight: 0,
       imageWidth: 0,
       imageRatio: 1,
-      maxImageWidth: 800,
-      maxImageHeight: 600,
+      maxImageWidth: 1024,
+      maxImageHeight: 1024,
+      images: [],
       points: [
         { x: 0, y: 0 },
         { x: 0, y: 0 },
@@ -45,7 +53,7 @@ export default {
   computed: {
     imageStyle() {
       return {
-        "background-image": `url(${this.imgUrl})`,
+        "background-image": `url(${this.imageUrl})`,
         "background-repeat":"no-repeat",
         width: this.imageWidth + 'px',
         height: this.imageHeight + 'px',
@@ -70,6 +78,12 @@ export default {
         return aAngle - bAngle;
       });
     },
+    sortedNormalizedPoints() {
+      return this.sortedPoints.map( ({x, y}) => { return {
+        x: x / this.imageWidth,
+        y: y / this.imageHeight
+      }} )
+    },
     polygonPoints() {
       return this.sortedPoints.map(point => `${point.x},${point.y}`).join(' ');
     }
@@ -78,7 +92,7 @@ export default {
     loadImage(event) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        this.imgUrl = e.target.result;
+        this.imageUrl = e.target.result;
         
         let img = new Image();
         img.onload = () => {
@@ -103,7 +117,8 @@ export default {
             { x: 0, y: this.imageHeight },
           ];
         };
-        img.src = this.imgUrl;
+        img.src = this.imageUrl;
+        console.log(reader)
       };
       reader.readAsDataURL(event.target.files[0]);
     },
@@ -142,6 +157,22 @@ export default {
     logpoints() {
       console.log(this.points);
     },
+    sendImage() {
+      fetch(this.store.server_host+`/get_transformed_image`, {
+        method: "POST",
+        more: "no-cors",
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          imageUrl: this.imageUrl,
+          points: this.sortedNormalizedPoints 
+        })
+      }).then(res => res.json()).then(json => {
+        this.images = json.images
+      })
+    }
   },
 };
 </script>
