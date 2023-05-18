@@ -1,183 +1,191 @@
 <template>
-  <div>
-    <input type="file" @change="loadImage" />
-    <div v-if="imageUrl" class="image-container" :style="imageStyle">
-      <svg width="100%" height="100%">
-        <polygon :points="polygonPoints" class="polygon" />
-      </svg>
-      <div
-        v-for="(pos, index) in points"
-        :key="index"
-        class="circle"
-        :style="{ top: `${pos.y}px`, left: `${pos.x}px` }"
-        @mousedown="startDrag(index, $event)"
-      ></div>
-    </div>
-    <button @click="logpoints">Log points</button>
-    <button @click="sendImage">Send image</button>
-  </div>
-  {{ points }}
-  <table>
-    <tr v-for="imgUrl in images"><img :src="imgUrl" max-height="20px" /></tr>
-  </table>
-  
+  <main>
+    <ReceiptUpload v-model="receiptUploadData"/>
+    <FormKit type="form" @submit="async () => uploadReceipt()" submit-label="Upload receipt"></FormKit>
+    <ReceiptTable ref="receiptTable" :article-images="imageUrls" :article-texts="imageTexts" v-show="imageUrls && imageUrls.length>0"></ReceiptTable>
+    <p>Receipt hash: <input type="text" :value="receipt_hash" @input="(e) => e.target.value = receipt_hash"/></p>
+    <p>Receipt URL: <input type="text" :value="receiptUrl" @input="(e) => e.target.value = receipt_hash"/></p>
+    <FormKit type="radio" v-model="syncMode" label="Sync location" :options="{local:'Local', online:'Online'}" />
+    <FormKit type="button" @click="async () => loadReceiptButton()">Load receipt</FormKit>
+    <FormKit type="button" @click="async () => saveReceiptButton()">Save receipt</FormKit>
+    <FormKit type="button" @click="async () => requestOcr(receipt_hash)">Request OCR</FormKit>
+
+  </main>
 </template>
 
 <script>
 import {store} from "./store"
+import ReceiptUpload from "./components/ReceiptUpload.vue";
+import ReceiptTable from "./components/ReceiptTable.vue";
+import { FormKit } from "@formkit/vue"
+// import * as pako from "pako"
 
 export default {
+  components: {
+    ReceiptUpload,
+    ReceiptTable,
+    FormKit
+},
+  mounted: async function() {
+    // Get the 'hash' parameter value from the URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const encodedHash = urlParams.get('hash');
+    if (encodedHash) {
+      const hash = decodeURIComponent(encodedHash);
+      this.receipt_hash = hash;
+      const receiptData = await this.getReceiptOnline(hash);
+      console.log(receiptData)
+      if (receiptData) this.loadReceipt(receiptData)
+    }
+  },
   data() {
     return {
       store,
-      imageUrl: null,
-      imageHeight: 0,
-      imageWidth: 0,
-      imageRatio: 1,
-      maxImageWidth: 1024,
-      maxImageHeight: 1024,
-      images: [],
-      points: [
-        { x: 0, y: 0 },
-        { x: 0, y: 0 },
-        { x: 0, y: 0 },
-        { x: 0, y: 0 },
-      ],
-      currentDrag: null,
-      dragOptions: {
-        draggable: '.circle',
-      },
-      dragOffset: { x: 0, y: 0 },
-    };
+      imageUrls: [],
+      imageTexts: [],
+      receipt_hash: "",
+      syncMode: "local",
+      error: null
+    }
   },
   computed: {
-    imageStyle() {
-      return {
-        "background-image": `url(${this.imageUrl})`,
-        "background-repeat":"no-repeat",
-        width: this.imageWidth + 'px',
-        height: this.imageHeight + 'px',
-        position: 'relative',
-        userSelect: 'none',
-      }
-    },
-    centroid() {
-      let xSum = 0;
-      let ySum = 0;
-      this.points.forEach(point => {
-        xSum += point.x;
-        ySum += point.y;
-      });
-      return {x: xSum / this.points.length, y: ySum / this.points.length};
-    },
-    sortedPoints() {
-      const pointsCopy = JSON.parse(JSON.stringify(this.points))
-      return pointsCopy.sort((a, b) => {
-        const aAngle = Math.atan2(a.y - this.centroid.y, a.x - this.centroid.x);
-        const bAngle = Math.atan2(b.y - this.centroid.y, b.x - this.centroid.x);
-        return aAngle - bAngle;
-      });
-    },
-    sortedNormalizedPoints() {
-      return this.sortedPoints.map( ({x, y}) => { return {
-        x: x / this.imageWidth,
-        y: y / this.imageHeight
-      }} )
-    },
-    polygonPoints() {
-      return this.sortedPoints.map(point => `${point.x},${point.y}`).join(' ');
+    receiptUrl() {
+      const url = new URL(window.location.origin)
+      url.searchParams.append("hash", this.receipt_hash)
+      return url.toString()
     }
   },
   methods: {
-    loadImage(event) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        this.imageUrl = e.target.result;
-        
-        let img = new Image();
-        img.onload = () => {
-          this.imageRatio = img.naturalWidth / img.naturalHeight
-
-          this.imageWidth = img.naturalWidth;
-          this.imageHeight = img.naturalHeight;
-          
-          if (this.imageWidth > this.maxImageWidth) {
-            this.imageWidth = this.maxImageWidth
-            this.imageHeight = parseInt(this.imageWidth / this.imageRatio)
-          }
-          if (this.imageHeight > this.maxImageHeight) {
-            this.imageHeight = this.maxImageHeight
-            this.imageWidth = parseInt(this.imageHeight * this.imageRatio)
-          }
-
-          this.points = [
-            { x: 0, y: 0 },
-            { x: this.imageWidth, y: 0 },
-            { x: this.imageWidth, y: this.imageHeight },
-            { x: 0, y: this.imageHeight },
-          ];
-        };
-        img.src = this.imageUrl;
-        console.log(reader)
-      };
-      reader.readAsDataURL(event.target.files[0]);
-    },
-    startDrag(index, event) {
-      this.currentDrag = index;
-
-      // Calculate the offset
-      this.dragOffset.x = event.clientX - this.points[index].x;
-      this.dragOffset.y = event.clientY - this.points[index].y;
-
-      // Add mousemove and mouseup listeners to the document
-      document.addEventListener('mousemove', this.moveDrag);
-      document.addEventListener('mouseup', this.stopDrag);
-    },
-    moveDrag(event) {
-      if (this.currentDrag !== null) {
-        this.points[this.currentDrag].x = event.clientX - this.dragOffset.x;
-        this.points[this.currentDrag].y = event.clientY - this.dragOffset.y;
-      }
-    },
-    stopDrag() {
-      this.currentDrag = null;
-
-      // clamp points
-      for (const pos of this.points) {
-        if (pos.x < 0) pos.x = 0
-        if (pos.x > this.imageWidth) pos.x = this.imageWidth
-        if (pos.y < 0) pos.y = 0
-        if (pos.y > this.imageHeight) pos.y = this.imageHeight
-      }
-
-      // Remove listeners from the document
-      document.removeEventListener('mousemove', this.moveDrag);
-      document.removeEventListener('mouseup', this.stopDrag);
-    },
-    logpoints() {
-      console.log(this.points);
-    },
-    sendImage() {
-      fetch(this.store.server_host+`/get_transformed_image`, {
-        method: "POST",
-        more: "no-cors",
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          imageUrl: this.imageUrl,
-          points: this.sortedNormalizedPoints 
+    uploadReceipt: async function () {
+        return fetch(this.store.server_host+`/get_transformed_image`, {
+          method: "POST",
+          more: "no-cors",
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(this.store.receiptUploadData)
         })
-      }).then(res => res.json()).then(json => {
-        this.images = json.images
-      })
+        .then(res => res.json())
+        .then(json => {
+          if (json.status == "exception") this.error = json.exception
+          console.log(json)
+          this.imageUrls = json.imageUrls
+          this.receipt_hash = json.hash
+        })
+        .catch(reason => this.error = reason)
+        .finally(() => {if (this.error) {console.error(this.error);this.error=null}})
+      },
+    getReceiptData() {
+      const receipt_data = {}
+      const table = this.$refs.receiptTable
+      for (const key of ["form_data", "paidByIdx", "totalPrice", "totals"])
+        receipt_data[key] = table.$data[key]
+      receipt_data.imageUrls = this.imageUrls
+      return receipt_data;
+    },
+    saveReceipt() {
+      window.localStorage.setItem("receipt_data", JSON.stringify(this.getReceiptData()))
+    },
+    loadReceipt(receipt_data) {
+      if (receipt_data === undefined) receipt_data = JSON.parse(window.localStorage.getItem("receipt_data"))
+      const table = this.$refs.receiptTable
+      this.imageUrls = receipt_data.imageUrls
+      setTimeout(() => {
+        for (const key of ["form_data", "paidByIdx", "totalPrice", "totals"])
+          table.$data[key] = receipt_data[key]
+        if (receipt_data.matchedRows !== undefined) this.applyOcrMatchedRows(receipt_data.matchedRows)
+        table.formChange()
+      }, 0)
+      
+    },
+    updateReceiptOnline: async function () {
+      const address = new URL(this.store.server_host+`/update_receipt`)
+      address.searchParams.append("hash", this.receipt_hash)
+      const receiptData = this.getReceiptData()
+      receiptData.imageUrls = undefined // don't upload imageUrls again
+      return fetch(address, {
+          method: "POST",
+          more: "no-cors",
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(receiptData)
+        })
+        .then(res => res.json())
+        .then(json => {
+          if (json.status == "exception") this.error = json.exception
+        })
+        .catch(reason => this.error = reason)
+        .finally(() => {if (this.error) {console.error(this.error);this.error=null}})
+    },
+    getReceiptOnline: async function (hash) {
+      const address = new URL(this.store.server_host+`/get_receipt`)
+      address.searchParams.append("hash", hash)
+      return fetch(address, {
+          method: "GET",
+          more: "no-cors"
+        })
+        .then(res => res.json())
+        .then(receiptData => {
+          if (receiptData.status == "exception") throw receiptData.exception
+          else return receiptData
+        })
+        .catch(reason => this.error = reason)
+        .finally(() => {if (this.error) {console.error(this.error);this.error=null}})
+    },
+    loadReceiptButton: async function () {
+      if (this.syncMode == "local") this.loadReceipt()
+      else {
+        return this.getReceiptOnline().then(receiptData => { this.loadReceipt(receiptData) })
+      }
+    },
+    saveReceiptButton: async function () {
+      if (this.syncMode == "local") this.saveReceipt()
+      else {
+        return this.updateReceiptOnline()
+      }
+    },
+    requestOcr: async function (hash) {
+      const address = new URL(this.store.server_host+`/request_ocr`)
+      address.searchParams.append("hash", hash)
+      return fetch(address, {
+          method: "GET",
+          more: "no-cors"
+        })
+        .then(res => res.json())
+        .then(receiptData => {
+          if (receiptData.status == "exception") throw receiptData.exception
+          // ocrRows, gptItems, matchedRows
+          console.log(receiptData)
+          this.applyOcrMatchedRows(receiptData.matchedRows)
+        })
+        .catch(reason => this.error = reason)
+        .finally(() => {if (this.error) {console.error(this.error);this.error=null}})
+    },
+    applyOcrMatchedRows(matchedRows) {
+      this.imageTexts = []
+      for (let i = 0 ; i < matchedRows.length ; i++) {
+        const row = matchedRows[i]
+        if (row) {
+          this.imageTexts.push(row[0])
+          if (row[1]) setTimeout(() => this.$refs.receiptTable.$data.form_data.articles[i].price = `${row[1]}`, 0)
+        } else {
+          this.imageTexts.push("")
+        }
+      }
     }
   },
 };
 </script>
 
 <style scoped>
+main {
+  max-width: 1280px;
+  margin:auto;
+}
+
 .image-container {
   position: relative;
   width: 100%;

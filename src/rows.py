@@ -33,7 +33,7 @@ def extract_rows(image):
     if not isinstance(image, np.ndarray):
         image = np.array(image)
     
-    scanline = np.mean(image, axis=(1,2))
+    scanline = -np.std(image, axis=tuple(range(1,len(image.shape))))
     scanline -= np.mean(scanline)
     freq = estimate_fundamental_frequency(scanline)
     period = 1 / freq
@@ -51,7 +51,7 @@ def extract_rows(image):
             a, b = peaks[i], peaks[i+1]
         if (b-a) < 8:
             continue
-        morceaux_de_ticket.append(Image.fromarray(image[a:b]))
+        morceaux_de_ticket.append(Image.fromarray(image[a:b]).resize((320, int(round((b-a)/image.shape[1]*320))), Image.Resampling.BICUBIC))
     
     return morceaux_de_ticket
 
@@ -60,7 +60,7 @@ if __name__ == "__main__":
 
     img = np.array(Image.open("crop.png"))
 
-    scanline = -np.std(img, axis=(1,2))
+    scanline = -np.std(img, axis=tuple(range(1,len(img.shape))))
     scanline -= np.mean(scanline)
 
     freq_n = estimate_fundamental_frequency(scanline)
@@ -104,6 +104,14 @@ if __name__ == "__main__":
     # for m in morceaux_de_ticket:
     #     plt.imshow(m)
     #     plt.show()
+
+    from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+    processor = TrOCRProcessor.from_pretrained('microsoft/trocr-large-printed')
+    model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-large-printed').to("cuda:0")
+
+    pixel_values = processor(images=[Image.fromarray(m).resize((256, int(round(m.shape[0]/m.shape[1]*256))), Image.Resampling.LANCZOS).convert("RGB") for m in morceaux_de_ticket], return_tensors="pt").to("cuda:0").pixel_values
+    generated_ids = model.generate(pixel_values)
+    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)
 
     fig, ax = plt.subplots(len(morceaux_de_ticket), 1)
     for i, m in enumerate(morceaux_de_ticket):
