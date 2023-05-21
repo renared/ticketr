@@ -3,9 +3,6 @@ from flask_cors import CORS
 import os
 import base64
 from PIL import Image, ImageOps
-import numpy as np
-import matplotlib, matplotlib.pyplot as plt
-matplotlib.use("agg")
 import io
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__),".."))
@@ -44,7 +41,6 @@ def ocr(images):
         return generated_text
 
 def ocr_to_items(text_rows):
-    return
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[
