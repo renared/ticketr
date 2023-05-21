@@ -51,6 +51,8 @@ def extract_rows(image):
             a, b = peaks[i], peaks[i+1]
         if (b-a) < 8:
             continue
+        a = max(0, int(round(a - 0.1*(b-a))))
+        b = min(image.shape[0], int(round(b + 0.1*(b-a))))
         morceaux_de_ticket.append(Image.fromarray(image[a:b]).resize((320, int(round((b-a)/image.shape[1]*320))), Image.Resampling.BICUBIC))
     
     return morceaux_de_ticket

@@ -143,18 +143,18 @@ def encode_image_url(img:Image.Image):
     return image_url
 
 def make_exception(exc):
+    print(exc)
     return {"status":"exception", "exception":str(exc)}
 
 @app.errorhandler(Exception)
 def handle_exception(e):
     exc = traceback.format_exc()
-    print(exc)
     return make_exception(exc)
 
 @app.route("/get_transformed_image", methods=["POST"])
 def rt_get_transformed_image():
     data = request.get_json()
-    image = decode_image_url(data["imageUrl"])
+    image = decode_image_url(data["imageUrl"]).convert("RGB")
 
     corners = data['points']
     dist = lambda c1, c2 : ( ((c1['x'] - c2['x'])*image.width)**2 + ((c1['y'] - c2['y'])*image.height)**2 ) ** .5
@@ -172,6 +172,8 @@ def rt_get_transformed_image():
     originalImageUrl = data["imageUrl"]
     croppedImageUrl = encode_image_url(img2)
     _hash = base64.b64encode(hashlib.sha1(croppedImageUrl.encode()).digest()).decode("utf-8")
+    if "receipt_"+_hash in db:
+        return make_exception("Receipt already in database, hash="+_hash)
     imageUrls = tuple(encode_image_url(img) for img in rows)
 
     db.setobj("receipt_"+_hash, {
@@ -213,6 +215,7 @@ def rt_request_ocr():
     h = request.args["hash"]
     receipt = db.getobj("receipt_"+request.args["hash"])
     if receipt is None: return make_exception("The receipt to be updated does not exist.")
+    print(receipt.keys())
     if "ocrRows" in receipt: return make_exception("OCR already done for this receipt.")
     images = [decode_image_url(url) for url in receipt["imageUrls"]]
     try:

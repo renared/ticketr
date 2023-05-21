@@ -6,9 +6,9 @@
     <p>Receipt hash: <input type="text" :value="receipt_hash" @input="(e) => e.target.value = receipt_hash"/></p>
     <p>Receipt URL: <input type="text" :value="receiptUrl" @input="(e) => e.target.value = receipt_hash"/></p>
     <FormKit type="radio" v-model="syncMode" label="Sync location" :options="{local:'Local', online:'Online'}" />
-    <FormKit type="button" @click="async () => loadReceiptButton()">Load receipt</FormKit>
-    <FormKit type="button" @click="async () => saveReceiptButton()">Save receipt</FormKit>
-    <FormKit type="button" @click="async () => requestOcr(receipt_hash)">Request OCR</FormKit>
+    <FormKit type="form" @submit="async () => loadReceiptButton()" submit-label="Load receipt"></FormKit>
+    <FormKit type="form" @submit="async () => saveReceiptButton()" submit-label="Save receipt"></FormKit>
+    <FormKit type="form" @submit="async () => requestOcr(receipt_hash)" submit-label="Request OCR"></FormKit>
 
   </main>
 </template>
@@ -52,6 +52,7 @@ export default {
     receiptUrl() {
       const url = new URL(window.location.origin)
       url.searchParams.append("hash", this.receipt_hash)
+      setTimeout(() => window.history.pushState({additionalInformation: "new receipt hash"}, document.title, url), 0)
       return url.toString()
     }
   },
@@ -68,19 +69,30 @@ export default {
         })
         .then(res => res.json())
         .then(json => {
-          if (json.status == "exception") this.error = json.exception
+          if (json.status == "exception") throw json.exception
           console.log(json)
           this.imageUrls = json.imageUrls
           this.receipt_hash = json.hash
         })
-        .catch(reason => this.error = reason)
+        .catch(reason => {
+          if (reason.startsWith("Receipt already in database")) {
+            const hash = reason.split("hash=")[1]
+            return this.getReceiptOnline(hash)
+            .then((receiptData) => {
+              this.loadReceipt(receiptData)
+              this.receipt_hash = hash
+            })
+          }
+          this.error = reason
+          
+        })
         .finally(() => {if (this.error) {console.error(this.error);this.error=null}})
       },
     getReceiptData() {
       const receipt_data = {}
       const table = this.$refs.receiptTable
       for (const key of ["form_data", "paidByIdx", "totalPrice", "totals"])
-        receipt_data[key] = table.$data[key]
+        if (table.$data[key] !== undefined) receipt_data[key] = table.$data[key]
       receipt_data.imageUrls = this.imageUrls
       return receipt_data;
     },
@@ -93,7 +105,7 @@ export default {
       this.imageUrls = receipt_data.imageUrls
       setTimeout(() => {
         for (const key of ["form_data", "paidByIdx", "totalPrice", "totals"])
-          table.$data[key] = receipt_data[key]
+          if (receipt_data[key] !== undefined) table.$data[key] = receipt_data[key]
         if (receipt_data.matchedRows !== undefined) this.applyOcrMatchedRows(receipt_data.matchedRows)
         table.formChange()
       }, 0)
@@ -166,15 +178,24 @@ export default {
     },
     applyOcrMatchedRows(matchedRows) {
       this.imageTexts = []
+      const priceUpdates = {}
       for (let i = 0 ; i < matchedRows.length ; i++) {
         const row = matchedRows[i]
         if (row) {
           this.imageTexts.push(row[0])
-          if (row[1]) setTimeout(() => this.$refs.receiptTable.$data.form_data.articles[i].price = `${row[1]}`, 0)
+          console.log(row[1])
+          if (row[1]) priceUpdates[i] = row[1].toString()
         } else {
           this.imageTexts.push("")
         }
       }
+      setTimeout(() => {
+        for (const [i, v] of Object.entries(priceUpdates)) {
+          this.$refs.receiptTable.$data.form_data.articles[i].price = v
+        }
+        this.$refs.receiptTable.formChange()
+      })
+      console.log(priceUpdates)
     }
   },
 };
