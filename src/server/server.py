@@ -16,22 +16,35 @@ from threading import Lock
 import json
 import traceback
 
-from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-ocr_processor = TrOCRProcessor.from_pretrained('microsoft/trocr-large-printed')
-ocr_model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-large-printed').to("cuda:0")
+USE_GPU = True
+USE_PYTESSERACT = False # attention c'est naze
+
+if not USE_PYTESSERACT:
+    from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+    ocr_processor = TrOCRProcessor.from_pretrained('microsoft/trocr-large-printed')
+    ocr_model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-large-printed')
+    if USE_GPU:
+        ocr_model = ocr_model.to("cuda:0")
 
 import openai
-openai.api_key = "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" #os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 from ast import literal_eval
 import Levenshtein
 
 def ocr(images):
-    pixel_values = ocr_processor(images=images, return_tensors="pt").to("cuda:0").pixel_values
-    generated_ids = ocr_model.generate(pixel_values)
-    generated_text = ocr_processor.batch_decode(generated_ids, skip_special_tokens=True)
-    return generated_text
+    if USE_PYTESSERACT:
+        import pytesseract
+        return [pytesseract.image_to_string(img, lang="fra", config="--oem 3 --psm 7 -c thresholding_method=1") for img in images]
+    else:
+        _processed = ocr_processor(images=images, return_tensors="pt")
+        if USE_GPU: _processed = _processed.to("cuda:0")
+        pixel_values = _processed.pixel_values
+        generated_ids = ocr_model.generate(pixel_values)
+        generated_text = ocr_processor.batch_decode(generated_ids, skip_special_tokens=True)
+        return generated_text
 
 def ocr_to_items(text_rows):
+    return
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[
@@ -42,7 +55,14 @@ def ocr_to_items(text_rows):
             ],
             max_tokens=512
         )
-    return literal_eval(response['choices'][0]['message']['content'])
+    
+    gptMessage = response['choices'][0]['message']['content']
+    try:
+        gptItems = literal_eval(gptMessage)
+    except Exception as e:
+        print("ChatGPT raw output:", gptMessage)
+        raise e
+    return gptItems
 
 def mapGptToImages(text_rows, gptItems):
     matched_rows = [None for _ in text_rows]
